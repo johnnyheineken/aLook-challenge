@@ -17,51 +17,103 @@ however, they are not needed for the analysis
 '''
 
 
-orig = pd.read_csv(
-    'Data\\transactions.txt',
-    sep='|',
-    parse_dates=['txn_time']
-)
-users = pd.read_csv('Data\\users.txt', sep='|')
+
+#%%
+def process_users(users, X):
+    '''Make basic processing of users table and merge with table X
+    users: raw users table, with 3 dimensions - age, gender, ID_user, pandas.DataFrame
+    X: processed table, 
+        with one customer on one row and assuming ID_user as an index, pandas.DataFrame
+    '''
+    users = users.fillna(0)
+    users['female'] = users.gender == 'female'
+    users['male'] = users.gender == 'male'
+    users['no_age'] = users.age == 0
+    users = users.drop(['gender'], axis=1)
+    users = users.set_index('ID_user')
+    X = X.merge(users, how='left', left_index=True, right_index=True)
+    return X
 
 
-time_reference = max(orig.txn_time) - pd.Timedelta(days=364)
+def process_products(products, transactions, X):
+    '''Find the most common category for given user and append to X.
+    products: raw table with ID_product and ID_category, pandas.DataFrame
+    transactions: raw transactions table with 5 columns, pandas.DataFrame
+    X: processed table, with one customer on one row, assuming ID_user as an index, pandas.DataFrame
+    '''
+    transactions['favorite_category'] = transactions \
+        .merge(products, how='left', on='ID_product') \
+        .ID_category \
+        .fillna(0) \
+        .astype(int) \
+        .astype(str)
+    products_users = pd.DataFrame(transactions
+                                .groupby('ID_user')
+                                .favorite_category
+                                .agg(lambda x: x.value_counts().index[0]))
+    products_users['missing_cat'] = products_users == '0'
+    X = X.merge(products_users, how='left',
+                left_index=True, right_index=True)
+    return X
 
 
-def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, check_time=True):
-    ''' Creates datasets usable in modelling with all features
-    requires t
-    for ids, which are available in last year from time_reference,
-    i will find  date of the last transaction, 
+def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products=None, verbose=False, check_time=False):
+    ''' Creates datasets usable in modelling with all features from given tables
+    - time_reference (pandas._libs.tslib.Timestamp), default Infer: 
+    \n timepoint, from which is whole dataset calculated
+        if left as Infer, function takes timestamp which is one year smaller from maximal time stamp present in users
+        dataset
+    - transactions (pandas.core.frame.DataFrame): 
+    \n raw dataset with transactions (5 columns)
+        requires that column 'txn_time' is parsed as a date
+    - users (optional - pandas.core.frame.DataFrame): 
+    \n raw users table
+    - products (optional - pandas.core.frame.DataFrame): 
+    \n raw products table
+    - verbose (bool), default False: 
+    \n should function print reports?
+    - check_time (bool), default True: 
+    \n should function check, whether time_reference is at least one year?
+    \n \n For ID_user, which are available in last year from time_reference,
+    function finds date of the last ID_tnx, 
     and look at all transactions in the year before 
-    and make quarterly variables.
-    if no transaction is in the year after the last txn, 
-    i will append churn = 1, otherwise 0'''
+    and make quarterly variables, along with several constant ones.
+    If no transaction is in the year after the last txn, 
+    function appends churn = 1, otherwise 0'''
     # it is tedious to write year over an over
     year = pd.Timedelta(days=365)
+    if type(transactions.txn_time[0]) is not pd._libs.tslib.Timestamp:
+        try:
+            transactions['txn_time'] = pd.to_datetime(transactions['txn_time'])
+            warnings.warn('\n "txn_time" of "transactions" matrix converted to datetime')
+        except:
+            raise TypeError(
+                "\n'txn_time' column of 'transactions' matrix is not pandas._libs.tslib.Timestamp")
 
     if transactions.shape[1] != 5:
-        sys.exit("Width of transaction matrix is not 5")
+        raise ValueError("Width of transaction matrix is not 5")
+
     if users is not None:
         if users.shape[1] != 3:
-            sys.exit("Width of user matrix is not 3")
-    if (time_reference > (max(transactions.txn_time)) - year) and check_time:
+            raise ValueError("Width of user matrix is not 3")
+    
+    if (time_reference is not "Infer") and \
+        (type(time_reference) is not pd._libs.tslib.Timestamp):
+            warnings.warn(
+                'time_reference is not pandas._libs.tslib.Timestamp or "Infer". Inferring date.')
+            time_reference = "Infer"
+    if time_reference is "Infer":
+        time_reference = (max(transactions.txn_time) - year - pd.Timedelta(days=1))
+
+    if (time_reference >= (max(transactions.txn_time)) - year) and check_time:
         warnings.warn('\n Time reference is not at least one year from the most current date in dataset, \
                         \n function returns X only. \
                         \n You can override this behaviour by setting check_time=False, \
                         \n but target variable might be corrupted')
     
-    def process_users(users, X):
-        users = users.fillna(0)
-        users['female'] = users.gender == 'female'
-        users['male'] = users.gender == 'male'
-        users['no_age'] = users.age == 0
-        users = users.drop(['gender'], axis=1)
-        users = users.set_index('ID_user')
-        X = X.merge(users, how='left', left_index=True, right_index=True)
-        return X
+    
 
-
+    
 
     # unique IDs before time reference - I am looking at all 
     # user Ids with any transaction in the last year
@@ -73,10 +125,12 @@ def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, ch
         ] \
         .ID_user \
         .unique()
+    
     if verbose:
         print('number of active users in year before time reference: ' + \
             str(len(unq_IDs_b4_timeref)))
-
+    if len(unq_IDs_b4_timeref) == 0:
+        raise ValueError("no data before time reference")
     # For feature engeneering, I decided to take only only data 
     # which are already available at the given moment. 
     # This will ensure that this function is applicable for any dataset
@@ -92,7 +146,7 @@ def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, ch
     def unit_test_sb(subset_before):
         if (max(subset_before.txn_time) > time_reference) or \
             len(subset_before.ID_user.unique()) != len(unq_IDs_b4_timeref):
-            print('test failed')
+            raise UserWarning('Unit test failed')
 
     unit_test_sb(subset_before)
 
@@ -106,9 +160,6 @@ def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, ch
         .reset_index() \
         .sort_values(by='txn_time', ascending=False)
     
-
-
-
     # I classify the quarters of each transaction in the dataset
     # This is the way I am preserving some temporal dimensions of the data
     # But in this way I will change it to classification task
@@ -227,10 +278,10 @@ def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, ch
         d = d \
             .merge(users_temp, how='left', on='ID_user') \
             .rename(
-            columns={0: ('item_count', 0),
-                    1: ('item_count', 1),
-                    2: ('item_count', 2),
-                    3: ('item_count', 3)}) \
+                columns={0: ('item_count', 0),
+                        1: ('item_count', 1),
+                        2: ('item_count', 2),
+                        3: ('item_count', 3)}) \
             .drop(['txn_time_y', 'txn_time_x'], axis=1) 
     # dropping unneeded columns
     # these columns either have no use (IDs)
@@ -251,10 +302,17 @@ def get_X_y_datasets(time_reference, transactions, users=None, verbose=False, ch
         .drop_duplicates() \
         .set_index('ID_user')
     
+
+    # adding columns from optional tables:
     if users is not None:
         if verbose:
             print('processing users')
         X = process_users(users, X)
+    if products is not None:
+        if verbose:
+            print('processing products')
+        X = process_products(products, transactions, X)
+
     # One more variable - what is the trend? 
     # Is the customer buying more or less with respect to most recent quarter?
     X[('trend_revenue', 0)] = (
