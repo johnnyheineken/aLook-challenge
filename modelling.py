@@ -1,31 +1,68 @@
 #%%
-from data_manipulation import get_X_y_datasets
+from data_manipulation import *
 from sklearn.ensemble import RandomForestClassifier
-# rf = RandomForestClassifier(random_state=0)
+
+from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import confusion_matrix, classification_report
-# print(confusion_matrix(y_test, y_pred))
-# print(mean(y_pred))
-# print(classification_report(y_test, y_pred))
+
+'''
+TODO:
+WRAP THE MODELS
+take all of the three models, pickle them and have them somewhere
+make another script which takes models, 
+creates dataset and predicts on such dataset
 
 
-X_train, y_train = get_X_y_datasets(time_reference, orig)
+ANALYSE THE X  DATASET
+Ill use R, probably to do that
+however I need to have dataset which spans from min(date) to max(date) - year
+with churn inside
+'''
+#%%
+
+
+orig = pd.read_csv(
+    'Data\\transactions.txt',
+    sep='|',
+    parse_dates=['txn_time']
+)
+users = pd.read_csv('Data\\users.txt', sep='|')
+products = pd.read_csv('Data\\products.txt', sep='|')
+
+n_quarters=8
+
+time_reference = max(orig.txn_time) - pd.Timedelta(days=2 * 365)
+
+#%%
+X_train, y_train = get_X_y_datasets(orig, 
+                    time_reference=time_reference,
+                    users=users,
+                    products=products,
+                    # verbose=True, 
+                    ndays_backward=(time_reference - min(orig.txn_time)).days, 
+                    n_quarters=n_quarters)
 X_test, y_test = get_X_y_datasets(
-    time_reference + pd.Timedelta(days=365), orig)
-X_train
-
+    transactions=orig,
+    users=users,
+    products=products,
+    time_reference=time_reference + pd.Timedelta(days=365),
+    # verbose=True, 
+    n_quarters=n_quarters)
 
 
 # Number of trees in random forest
-n_estimators = [int(x) for x in np.linspace(start=100, stop=2000, num=5)]
+rf = RandomForestClassifier(verbose=True, random_state=2110)
+
+n_estimators = [int(x) for x in np.linspace(start=100, stop=2000, num=4)]
 # Number of features to consider at every split
 max_features = ['auto']
 # Maximum number of levels in tree
-max_depth = [int(x) for x in np.linspace(10, 100, num=5)]
-max_depth.append(None)
+max_depth = [int(x) for x in np.linspace(10, 100, num=4)]
+# max_depth.append(None)
 # Minimum number of samples required to split a node
 min_samples_split = [2, 5, 10]  
 # Minimum number of samples required at each leaf node
-min_samples_leaf = [1, 2, 4]
+min_samples_leaf = [2, 4]
 # Method of selecting samples for training each tree
 bootstrap = [True]
 random_grid = {'n_estimators': n_estimators,
@@ -35,27 +72,30 @@ random_grid = {'n_estimators': n_estimators,
                'min_samples_leaf': min_samples_leaf,
                'bootstrap': bootstrap}
 
-from sklearn.model_selection import GridSearchCV
+
 clf = GridSearchCV(rf, random_grid, verbose=True, n_jobs=4).fit(X_train, y_train)
 
+print(clf.best_params_)
+y_pred = clf.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
 
-X_train, y_train = get_X_y_datasets(time_reference, orig)
-X_test, y_test = get_X_y_datasets(
-    time_reference + pd.Timedelta(days=365), orig)
 
-#%%
-clf.best_params_
+
+
+
+
 # Number of trees in random forest
-n_estimators = [int(x) for x in np.linspace(start=1500, stop=3000, num=5)]
+n_estimators = [int(x) for x in np.linspace(start=50, stop=3500, num=4)]
 # Number of features to consider at every split
-max_features = ['auto', 'sqrt']
+max_features = ['auto']
 # Maximum number of levels in tree
-max_depth = [int(x) for x in np.linspace(15, 50, num=5)]
+max_depth = [int(x) for x in np.linspace(5, 200, num=4)]
 # max_depth.append(None)
 # Minimum number of samples required to split a node
 min_samples_split = [2, 5, 10]
 # Minimum number of samples required at each leaf node
-min_samples_leaf = [1, 2, 4]
+min_samples_leaf = [3, 4, 5]
 # Method of selecting samples for training each tree
 bootstrap = [True]
 random_grid = {'n_estimators': n_estimators,
@@ -65,74 +105,145 @@ random_grid = {'n_estimators': n_estimators,
                'min_samples_leaf': min_samples_leaf,
                'bootstrap': bootstrap}
 
-from sklearn.model_selection import GridSearchCV
-clf = GridSearchCV(rf, random_grid, verbose=True,
-                   n_jobs=3).fit(X_train, y_train)
+clf = GridSearchCV(rf, random_grid, 
+                    scoring='f1',
+                    verbose=True,
+                    n_jobs=4).fit(X_train, y_train)
 
-# X_train
-# #%%
-# from sklearn.naive_bayes import GaussianNB
-# gnb = GaussianNB(priors=[0.5, 0.5])
-# y_pred = gnb.fit(X_train, y_train).predict(X_test)
+y_pred = clf.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
 
-# #%%
-# from sklearn.metrics import confusion_matrix, classification_report
-# print(confusion_matrix(y_test, y_pred))
-# print(mean(y_pred))
-# print(classification_report(y_test, y_pred))
+#%%
 
-# #%%
-# from sklearn.ensemble import RandomForestClassifier
-# rf = RandomForestClassifier(random_state=0)
-# # clf.fit(X_train, y_train)
-# # print(clf.feature_importances_)
-# # X_train.columns
+X_train, y_train = get_X_y_datasets(orig,
+                                    time_reference=time_reference,
+                                    users=users,
+                                    products=products,
+                                    # verbose=True,
+                                    ndays_backward=(
+                                        time_reference - min(orig.txn_time)).days,
+                                    n_quarters=n_quarters)
+X_test, y_test = get_X_y_datasets(
+    transactions=orig,
+    users=users,
+    products=products,
+    time_reference=time_reference + pd.Timedelta(days=365),
+    # verbose=True,
+    n_quarters=n_quarters)
 
 
-# # Number of trees in random forest
-# n_estimators = [int(x) for x in np.linspace(start=1000, stop=3000, num=5)]
-# # Number of features to consider at every split
-# max_features = ['auto']
-# # Maximum number of levels in tree
-# max_depth = [int(x) for x in np.linspace(10, 100, num=5)]
-# max_depth.append(None)
-# # Minimum number of samples required to split a node
-# min_samples_split = [2, 5, 10]
-# # Minimum number of samples required at each leaf node
-# min_samples_leaf = [1, 2, 4]
-# # Method of selecting samples for training each tree
-# bootstrap = [True]
-# random_grid = {'n_estimators': n_estimators,
-#                'max_features': max_features,
-#                'max_depth': max_depth,
-#                'min_samples_split': min_samples_split,
-#                'min_samples_leaf': min_samples_leaf,
-#                'bootstrap': bootstrap}
+clf_all = RandomForestClassifier(bootstrap= True,
+        max_depth=70,
+        max_features='auto',
+        min_samples_leaf=4,
+        min_samples_split=2,
+        n_estimators=1200)
+clf_all = clf_all.fit(X_train, y_train)
+y_pred = clf_all.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
 
-# from sklearn.model_selection import GridSearchCV
-# clf = GridSearchCV(rf, random_grid, verbose=True,
-#                    n_jobs=4).fit(X_train, y_train)
 
-# #%%
-# import pprint
-# rf.get_params()
-# (clf.best_params_)
-# #%%
-# y_pred = clf.predict(X_test)
-# print(confusion_matrix(y_test, y_pred))
-# print(mean(y_pred))
-# print(classification_report(y_test, y_pred))
-# #%%
 
-# gnb = GaussianNB(priors=[0.4, 0.6])
-# for i in range(12):
-#     time = min(orig.txn_time) + pd.Timedelta(days=(3 * 30 * i) + 365)
+#%%
 
-#     if i == 0:
-#         X_train, y_train = get_X_y_datasets(time, orig)
-#     else:
-#         X_train, y_train = X_test, y_test
-#     X_test, y_test = get_X_y_datasets(time + pd.Timedelta(days=30), orig)
-#     y_pred = gnb.partial_fit(X_train, y_train, [0, 1]).predict(X_test)
-#     print(mean(y_pred))
-#     print(confusion_matrix(y_test, y_pred))
+X_train, y_train = get_X_y_datasets(orig,
+                                    time_reference=time_reference,
+                                    users=users,
+                                    # products=products,
+                                    # verbose=True,
+                                    ndays_backward=(
+                                        time_reference - min(orig.txn_time)).days,
+                                    n_quarters=n_quarters)
+X_test, y_test = get_X_y_datasets(
+    transactions=orig,
+    users=users,
+    # products=products,
+    time_reference=time_reference + pd.Timedelta(days=365),
+    # verbose=True,
+    n_quarters=n_quarters)
+
+
+
+clf_no_products = RandomForestClassifier(bootstrap=True,
+                               max_depth=70,
+                               max_features='auto',
+                               min_samples_leaf=4,
+                               min_samples_split=2,
+                               n_estimators=1200) \
+                    .fit(X_train, y_train)
+
+y_pred = clf_no_products.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+#%%
+X_train, y_train = get_X_y_datasets(orig,
+                                    time_reference=time_reference,
+                                    # users=users,
+                                    products=products,
+                                    # verbose=True,
+                                    ndays_backward=(
+                                        time_reference - min(orig.txn_time)).days,
+                                    n_quarters=n_quarters)
+X_test, y_test = get_X_y_datasets(
+    transactions=orig,
+    # users=users,
+    products=products,
+    time_reference=time_reference + pd.Timedelta(days=365),
+    # verbose=True,
+    n_quarters=n_quarters)
+
+rf = RandomForestClassifier(verbose=True, random_state=2110)
+
+clf_no_users = RandomForestClassifier(bootstrap=True,
+                                         max_depth=70,
+                                         max_features='auto',
+                                         min_samples_leaf=4,
+                                         min_samples_split=2,
+                                         n_estimators=1200) \
+    .fit(X_train, y_train)
+
+y_pred = clf_no_users.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+
+
+#%%
+X_train, y_train = get_X_y_datasets(orig,
+                                    time_reference=time_reference,
+                                    # users=users,
+                                    # products=products,
+                                    # verbose=True,
+                                    ndays_backward=(
+                                        time_reference - min(orig.txn_time)).days,
+                                    n_quarters=n_quarters)
+X_test, y_test = get_X_y_datasets(
+    transactions=orig,
+    # users=users,
+    # products=products,
+    time_reference=time_reference + pd.Timedelta(days=365),
+    # verbose=True,
+    n_quarters=n_quarters)
+
+rf = RandomForestClassifier(verbose=True, random_state=2110)
+
+clf_no_users_products = RandomForestClassifier(bootstrap=True,
+                                      max_depth=70,
+                                      max_features='auto',
+                                      min_samples_leaf=4,
+                                      min_samples_split=2,
+                                      n_estimators=1200) \
+    .fit(X_train, y_train)
+
+y_pred = clf_no_users_products.predict(X_test)
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred))
+#%%
+
+import pickle
+classifiers_all = [clf_all, clf_no_products, clf_no_users, clf_no_users_products]
+with open('model_GS_with_users.pickle', 'wb') as pickle_file:
+    pickle.dump(classifiers_all, pickle_file)
+

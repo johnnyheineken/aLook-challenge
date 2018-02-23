@@ -41,13 +41,14 @@ def process_products(products, transactions, X):
     transactions: raw transactions table with 5 columns, pandas.DataFrame
     X: processed table, with one customer on one row, assuming ID_user as an index, pandas.DataFrame
     '''
-    transactions['favorite_category'] = transactions \
+    trans_temp = transactions.copy()
+    trans_temp['favorite_category'] = trans_temp \
         .merge(products, how='left', on='ID_product') \
         .ID_category \
         .fillna(0) \
         .astype(int) \
         .astype(str)
-    products_users = pd.DataFrame(transactions
+    products_users = pd.DataFrame(trans_temp
                                 .groupby('ID_user')
                                 .favorite_category
                                 .agg(lambda x: x.value_counts().index[0]))
@@ -57,7 +58,13 @@ def process_products(products, transactions, X):
     return X
 
 
-def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products=None, verbose=False, check_time=False):
+def get_X_y_datasets(transactions,
+        time_reference="Infer", 
+        users=None,
+        products=None,
+        verbose=False,
+        check_time=False,
+        ndays_backward = 365, n_quarters=4):
     ''' Creates datasets usable in modelling with all features from given tables
     - time_reference (pandas._libs.tslib.Timestamp), default Infer: 
     \n timepoint, from which is whole dataset calculated
@@ -121,7 +128,7 @@ def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products
         print('dividing datasets')
     unq_IDs_b4_timeref = transactions[
             (transactions.txn_time < time_reference) & \
-            (transactions.txn_time > (time_reference - year))
+            (transactions.txn_time > (time_reference - pd.Timedelta(days=ndays_backward)))
         ] \
         .ID_user \
         .unique()
@@ -202,7 +209,7 @@ def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products
         print('Creating features')
     # In the end, I am interested only in data in the last year.
     # Therefore, I take only data containing last four periods
-    d = subset_before[subset_before.quarter <=3]
+    d = subset_before[subset_before.quarter <= n_quarters]
     # number of items bought, totally (in the last year)
     d = d \
         .groupby(d.columns.tolist()) \
@@ -301,7 +308,14 @@ def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products
         .sort_values('ID_user') \
         .drop_duplicates() \
         .set_index('ID_user')
-    
+    # One more variable - what is the trend? 
+    # Is the customer buying more or less with respect to most recent quarter?
+    X[('trend_revenue', 0)] = (
+        X[('overall_price', 1)] - X[('overall_price', 0)]) > 0
+    X[('trend_revenue', 1)] = (
+        X[('overall_price', 2)] - X[('overall_price', 0)]) > 0
+    X[('trend_revenue', 2)] = (
+        X[('overall_price', 3)] - X[('overall_price', 0)]) > 0
 
     # adding columns from optional tables:
     if users is not None:
@@ -313,14 +327,7 @@ def get_X_y_datasets(transactions, time_reference="Infer",  users=None, products
             print('processing products')
         X = process_products(products, transactions, X)
 
-    # One more variable - what is the trend? 
-    # Is the customer buying more or less with respect to most recent quarter?
-    X[('trend_revenue', 0)] = (
-        X[('overall_price', 1)] - X[('overall_price', 0)]) > 0
-    X[('trend_revenue', 1)] = (
-        X[('overall_price', 2)] - X[('overall_price', 0)]) > 0
-    X[('trend_revenue', 2)] = (
-        X[('overall_price', 3)] - X[('overall_price', 0)]) > 0
+
 
     # Creating y and X.
     y = X.churn
