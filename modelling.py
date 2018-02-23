@@ -41,6 +41,11 @@ X_train, y_train = get_X_y_datasets(orig,
                     # verbose=True, 
                     ndays_backward=(time_reference - min(orig.txn_time)).days, 
                     n_quarters=n_quarters)
+#%%
+result = pd.DataFrame(X_train.index.values)
+result['abc'] = y_train.tolist()
+result
+#%%
 X_test, y_test = get_X_y_datasets(
     transactions=orig,
     users=users,
@@ -240,10 +245,10 @@ clf_no_users_products = RandomForestClassifier(bootstrap=True,
 y_pred = clf_no_users_products.predict(X_test)
 print(confusion_matrix(y_test, y_pred))
 print(classification_report(y_test, y_pred))
-#%%
 
+#%%
 import pickle
 classifiers_all = [clf_all, clf_no_products, clf_no_users, clf_no_users_products]
-with open('model_GS_with_users.pickle', 'wb') as pickle_file:
+with open('classifiers_all.pickle', 'wb') as pickle_file:
     pickle.dump(classifiers_all, pickle_file)
 

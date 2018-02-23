@@ -10,10 +10,8 @@ import sys
 
 '''
 TODO:
-add variables from users.txt
-and products.txt
-
-however, they are not needed for the analysis
+Done?
+get a way to get X dataset only
 '''
 
 
@@ -64,7 +62,7 @@ def get_X_y_datasets(transactions,
         products=None,
         verbose=False,
         check_time=False,
-        ndays_backward = 365, n_quarters=4):
+        ndays_backward = 365, n_quarters=8):
     ''' Creates datasets usable in modelling with all features from given tables
     - time_reference (pandas._libs.tslib.Timestamp), default Infer: 
     \n timepoint, from which is whole dataset calculated
@@ -99,10 +97,14 @@ def get_X_y_datasets(transactions,
 
     if transactions.shape[1] != 5:
         raise ValueError("Width of transaction matrix is not 5")
-
+    
     if users is not None:
         if users.shape[1] != 3:
             raise ValueError("Width of user matrix is not 3")
+
+    if products is not None:
+        if products.shape[1] != 2:
+            raise ValueError("Width of user matrix is not 2")
     
     if (time_reference is not "Infer") and \
         (type(time_reference) is not pd._libs.tslib.Timestamp):
@@ -207,8 +209,8 @@ def get_X_y_datasets(transactions,
 
     if verbose:
         print('Creating features')
-    # In the end, I am interested only in data in the last year.
-    # Therefore, I take only data containing last four periods
+    # I take the number of periods I am interested in
+    # I had good results with n_quarters=8
     d = subset_before[subset_before.quarter <= n_quarters]
     # number of items bought, totally (in the last year)
     d = d \
@@ -285,10 +287,8 @@ def get_X_y_datasets(transactions,
         d = d \
             .merge(users_temp, how='left', on='ID_user') \
             .rename(
-                columns={0: ('item_count', 0),
-                        1: ('item_count', 1),
-                        2: ('item_count', 2),
-                        3: ('item_count', 3)}) \
+                columns={_key : ('item_count', _key) for _key in range(n_quarters+1)}
+                ) \
             .drop(['txn_time_y', 'txn_time_x'], axis=1) 
     # dropping unneeded columns
     # these columns either have no use (IDs)
