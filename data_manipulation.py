@@ -1,22 +1,19 @@
-#%%
+'''
+Works in Python 3.6, Windows 10
+Made: Jan Hynek
+
+TODO:
+
+
+'''
 import pandas as pd
+import numpy as np
 import math
 from numpy import mean
 import warnings
-import numpy as np
-import argparse
-import sys
-
-
-'''
-TODO:
-Done?
-get a way to get X dataset only
-'''
 
 
 
-#%%
 def process_users(users, X):
     '''Make basic processing of users table and merge with table X
     users: raw users table, with 3 dimensions - age, gender, ID_user, pandas.DataFrame
@@ -56,13 +53,165 @@ def process_products(products, transactions, X):
     return X
 
 
+def feature_extraction(subset_before, n_quarters, users_temp, verbose):    
+    if verbose:
+        print('Creating features')
+    # I take the number of periods I am interested in
+    # I had good results with n_quarters=8
+    d = subset_before[subset_before.quarter <= n_quarters]
+    # number of items bought, totally (in the last year)
+    d = d \
+        .groupby(d.columns.tolist()) \
+        .size() \
+        .reset_index() \
+        .rename(columns={0: 'item_count'})
+    # Cost of transaction obtained from given user (in the last year)
+    d = d \
+        .assign(overall_price=lambda x: x['price'] * x['item_count'])
+    # number of transactions of given user (in the last year)
+    d['txn_total'] = d.groupby('ID_user') \
+        .ID_txn \
+        .transform(len)
+    # revenue obtained from given user
+    d['revenue_total'] = d.groupby('ID_user') \
+        .overall_price \
+        .transform(sum)
+    # of things bought by given user
+    d['things_total'] = d.groupby('ID_user')['item_count'] \
+        .transform(sum)
+
+    # Shortcut
+    Grouped = d.groupby('ID_user')
+
+    # Helping functions, used in the next part
+    def in_work(x):
+        m = mean(x)
+        return int((9 < m) & (m < 17))
+
+    def in_evening(x): return int(17 <= mean(x))
+
+    # When was the transaction made?
+    d['hour_bought'] = [i.hour for i in d.txn_time_x]
+    # Was that during usual working hours? (ignoring weekends, though)
+    d['in_work'] = Grouped \
+        .hour_bought \
+        .transform(in_work)
+    # Was that in evening?
+    d['in_evening'] = Grouped \
+        .hour_bought \
+        .transform(in_evening)
+    # This could provide us with some profile of the customers. Maybe those who buy
+    # things while at work are fired afterwards and have to churn ... :)
+
+    # Proxy for socioeconomic status of the customer
+    # Is he or she buying expensive things?
+    d['avg_price_txn'] = d.revenue_total / d.txn_total
+    d['avg_price_thing'] = d.revenue_total / d.things_total
+
+    # Revenue from given customer per quarter
+    revenue_per_q = d[['ID_user', 'overall_price', 'quarter']]
+    revenue_per_q = revenue_per_q.groupby(['ID_user', 'quarter']).sum()
+    revenue_per_q = revenue_per_q.unstack().fillna(0).reset_index()
+
+    # How many transactions has the customer made in given quarter
+    transactions_per_q = d[['ID_user', 'item_count', 'quarter']]
+    transactions_per_q = transactions_per_q.groupby(
+        ['ID_user', 'quarter']).size()
+    transactions_per_q = transactions_per_q.unstack().fillna(0).reset_index()
+
+    # Suppressing warnings, as the merge issue several
+    # as the tables are multiindex ones, however merging them
+    # creates desired structure.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if verbose:
+            print('merging temporary datasets')
+        users_temp = users_temp.merge(revenue_per_q, how='left', on='ID_user')
+        users_temp = users_temp.merge(transactions_per_q, how='left',
+                                      on='ID_user').drop('txn_time', axis=1)
+        # But why some columns are not named afterwards,
+        # remains mystery for me
+        d = d \
+            .merge(users_temp, how='left', on='ID_user') \
+            .rename(
+                columns={_key: ('item_count', _key)
+                         for _key in range(n_quarters + 1)}
+            ) \
+            .drop(['txn_time_y', 'txn_time_x'], axis=1)
+        # dropping unneeded columns
+    # these columns either have no use (IDs)
+    # or they are transaction dependent (hour_bought)
+    # or would cause multicollinearity (revenue_total)
+    if verbose:
+        print('dropping duplicates and unecessary columns')
+    X = d.drop(
+        ['quarter',
+         'item_count',
+         'ID_txn',
+         'hour_bought',
+         'ID_product',
+         'price',
+         'overall_price',
+         'revenue_total'], axis=1) \
+        .sort_values('ID_user') \
+        .drop_duplicates() \
+        .set_index('ID_user')
+    # One more variable - what is the trend?
+    # Is the customer buying more or less with respect to most recent quarter?
+    X[('trend_revenue', 0)] = (
+        X[('overall_price', 1)] - X[('overall_price', 0)]) > 0
+    X[('trend_revenue', 1)] = (
+        X[('overall_price', 2)] - X[('overall_price', 0)]) > 0
+    X[('trend_revenue', 2)] = (
+        X[('overall_price', 3)] - X[('overall_price', 0)]) > 0
+    return X
+
+
+def create_churn(users_temp, transactions, verbose):
+    ######################
+    ### CHURN CREATION ###
+    ######################
+    # Now, creation of the churn
+    #  I am looking at the original dataset
+    # I look at the transactions, subset them for future year from the last transaction
+    # and if that dataset is empty
+    # I append one, otherwise I append zero
+    year = pd.Timedelta(days=365)
+    if verbose:
+        print('Creating churn')
+    churn = []
+    for i, j in users_temp.itertuples(index=False):
+        churn.append(int(transactions[
+            (transactions.ID_user == i) &
+            (transactions.txn_time < j + year) &
+            (transactions.txn_time > j)]
+            .empty))
+    return churn
+
+
+def get_subset(X, y, percentile=70, rich=True):
+    X2 = X.copy()
+    X2['churn'] = y
+    # X2['churn']
+    X2['total'] = X2.txn_total * X2.avg_price_txn
+    perc = np.percentile(X2.total, percentile)
+    if rich:
+        X_subset = X2[(X2.total > perc)]
+    else:
+        X_subset = X2[(X2.total <= perc)]
+    # X_subset
+    y_subset = X_subset.churn
+    X_subset = X_subset.drop(['churn', 'total'], axis=1)
+    return X_subset, y_subset
+
+
 def get_X_y_datasets(transactions,
         time_reference="Infer", 
         users=None,
         products=None,
         verbose=False,
         check_time=False,
-        ndays_backward = 365, n_quarters=8):
+        ndays_backward = 365, n_quarters=4):
     ''' Creates datasets usable in modelling with all features from given tables
     - time_reference (pandas._libs.tslib.Timestamp), default Infer: 
     \n timepoint, from which is whole dataset calculated
@@ -77,8 +226,12 @@ def get_X_y_datasets(transactions,
     \n raw products table
     - verbose (bool), default False: 
     \n should function print reports?
-    - check_time (bool), default True: 
+    - check_time (bool), default False: 
     \n should function check, whether time_reference is at least one year?
+    - ndays_backward (optional - integer), default 365: 
+    \n how many days before timereference should be used to determine users present in the dataset?
+    - n_quarters (optional - int), default 8:
+    \n how many quarters should be used to create temporal variables?
     \n \n For ID_user, which are available in last year from time_reference,
     function finds date of the last ID_tnx, 
     and look at all transactions in the year before 
@@ -185,138 +338,24 @@ def get_X_y_datasets(transactions,
             subset_before.iloc[i, ].txn_time_y)
         for i in range(subset_before.shape[0])]
 
-    ######################
-    ### CHURN CREATION ###
-    ######################
-    # Now, creation of the churn
-    #  I am looking at the original dataset
-    # I look at the transactions, subset them for future year from the last transaction
-    # and if that dataset is empty
-    # I append one, otherwise I append zero
-    if verbose:
-        print('Creating churn')
-    churn = []
-    for i, j in users_temp.itertuples(index=False):
-        churn.append(int(transactions[
-            (transactions.ID_user == i) &
-            (transactions.txn_time < j + year) &
-            (transactions.txn_time > j)]
-            .empty))
+    ############################
+    ##### Creating churn  ######
+    ############################
+
+    churn = create_churn(users_temp, transactions, verbose)
+
     users_temp['churn'] = churn
     users_temp['last_txn_days'] = [i.days for i in (time_reference - users_temp.txn_time)]
 
+    ###############################
+    #### Feature extraction  ######
+    ###############################
 
+    X = feature_extraction(subset_before, n_quarters, users_temp, verbose)
 
-    if verbose:
-        print('Creating features')
-    # I take the number of periods I am interested in
-    # I had good results with n_quarters=8
-    d = subset_before[subset_before.quarter <= n_quarters]
-    # number of items bought, totally (in the last year)
-    d = d \
-        .groupby(d.columns.tolist()) \
-        .size() \
-        .reset_index() \
-        .rename(columns={0: 'item_count'})
-    # Cost of transaction obtained from given user (in the last year)
-    d = d \
-        .assign(overall_price=lambda x: x['price'] * x['item_count'])
-    # number of transactions of given user (in the last year)
-    d['txn_total'] = d.groupby('ID_user') \
-        .ID_txn \
-        .transform(len)
-    # revenue obtained from given user
-    d['revenue_total'] = d.groupby('ID_user') \
-        .overall_price \
-        .transform(sum)
-    # of things bought by given user
-    d['things_total'] = d.groupby('ID_user')['item_count'] \
-        .transform(sum)
-
-    # Shortcut
-    Grouped = d.groupby('ID_user')
-    
-    # Helping functions, used in the next part
-    def in_work(x):
-        m = mean(x)
-        return int((9 < m) & (m < 17))
-
-    def in_evening(x): return int(17 <= mean(x))
-
-    # When was the transaction made?
-    d['hour_bought'] = [i.hour for i in d.txn_time_x]
-    # Was that during usual working hours? (ignoring weekends, though)
-    d['in_work'] = Grouped \
-        .hour_bought \
-        .transform(in_work)
-    # Was that in evening?
-    d['in_evening'] = Grouped \
-        .hour_bought \
-        .transform(in_evening)
-    # This could provide us with some profile of the customers. Maybe those who buy 
-    # things while at work are fired afterwards and have to churn ... :)
-
-    # Proxy for socioeconomic status of the customer
-    # Is he or she buying expensive things?
-    d['avg_price_txn'] = d.revenue_total / d.txn_total
-    d['avg_price_thing'] = d.revenue_total / d.things_total
-
-
-    # Revenue from given customer per quarter
-    revenue_per_q = d[['ID_user', 'overall_price', 'quarter']]
-    revenue_per_q = revenue_per_q.groupby(['ID_user', 'quarter']).sum()
-    revenue_per_q = revenue_per_q.unstack().fillna(0).reset_index()
-
-    # How many transactions has the customer made in given quarter
-    transactions_per_q = d[['ID_user', 'item_count', 'quarter']]
-    transactions_per_q= transactions_per_q.groupby(['ID_user', 'quarter']).size()
-    transactions_per_q = transactions_per_q.unstack().fillna(0).reset_index()
-    
-    # Suppressing warnings, as the merge issue several
-    # as the tables are multiindex ones, however merging them
-    # creates desired structure.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        if verbose:
-            print('merging temporary datasets')
-        users_temp = users_temp.merge(revenue_per_q, how='left', on='ID_user')
-        users_temp = users_temp.merge(transactions_per_q, how='left',
-                    on='ID_user').drop('txn_time', axis=1)
-        # But why some columns are not named afterwards,
-        # remains mystery for me
-        d = d \
-            .merge(users_temp, how='left', on='ID_user') \
-            .rename(
-                columns={_key : ('item_count', _key) for _key in range(n_quarters+1)}
-                ) \
-            .drop(['txn_time_y', 'txn_time_x'], axis=1) 
-    # dropping unneeded columns
-    # these columns either have no use (IDs)
-    # or they are transaction dependent (hour_bought)
-    # or would cause multicollinearity (revenue_total)
-    if verbose:
-        print('dropping duplicates and unecessary columns')
-    X = d.drop(
-            ['quarter',
-             'item_count',
-             'ID_txn',
-             'hour_bought',
-             'ID_product',
-             'price',
-             'overall_price',
-             'revenue_total'], axis=1) \
-        .sort_values('ID_user') \
-        .drop_duplicates() \
-        .set_index('ID_user')
-    # One more variable - what is the trend? 
-    # Is the customer buying more or less with respect to most recent quarter?
-    X[('trend_revenue', 0)] = (
-        X[('overall_price', 1)] - X[('overall_price', 0)]) > 0
-    X[('trend_revenue', 1)] = (
-        X[('overall_price', 2)] - X[('overall_price', 0)]) > 0
-    X[('trend_revenue', 2)] = (
-        X[('overall_price', 3)] - X[('overall_price', 0)]) > 0
-
+    ###############################
+    ### Processing other tables ###
+    ###############################
     # adding columns from optional tables:
     if users is not None:
         if verbose:
